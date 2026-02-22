@@ -92,6 +92,7 @@ func setupTestStore(t *testing.T) (*DoltStore, func()) {
 		dropCtx, dropCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer dropCancel()
 		_, _ = store.db.ExecContext(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
+		_, _ = store.db.ExecContext(dropCtx, fmt.Sprintf("DELETE FROM dolt_branch_control WHERE `database` = '%s'", dbName))
 		store.Close()
 		os.RemoveAll(tmpDir)
 	}
@@ -123,6 +124,7 @@ func TestNewDoltStore(t *testing.T) {
 	}
 	defer func() {
 		_, _ = store.db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
+		_, _ = store.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM dolt_branch_control WHERE `database` = '%s'", dbName))
 		store.Close()
 	}()
 
