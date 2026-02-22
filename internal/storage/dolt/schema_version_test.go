@@ -160,6 +160,5 @@ func TestSchemaVersionRunsInitWhenMissing(t *testing.T) {
 	dropCtx, dropCancel := context.WithTimeout(context.Background(), 5*testTimeout)
 	defer dropCancel()
 	_, _ = store.db.ExecContext(dropCtx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
-	_, _ = store.db.ExecContext(dropCtx, fmt.Sprintf("DELETE FROM dolt_branch_control WHERE `database` = '%s'", dbName))
 	store.Close()
 }

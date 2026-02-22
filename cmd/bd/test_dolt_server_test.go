@@ -69,7 +69,6 @@ func tryExistingServer(port int) int {
 		return 0
 	}
 	_, _ = db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", testDB))
-	_, _ = db.ExecContext(ctx, fmt.Sprintf("DELETE FROM dolt_branch_control WHERE `database` = '%s'", testDB))
 	return port
 }
 
