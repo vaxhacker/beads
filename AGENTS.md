@@ -6,14 +6,11 @@ This file exists for compatibility with tools that look for AGENTS.md.
 
 ## Git Push Policy
 
-**The fork is the working repo.** All agent work pushes to the fork (`vaxhacker/beads`), never upstream (`steveyegge/beads`).
+Push directly to `main`. No PRs.
 
-- **Push to**: `origin` (which pushes to `vaxhacker/beads`)
-- **Never create PRs** to upstream (`steveyegge/beads`) — not for syncing, not for features, not for anything
-- **Branch rules**: Push to `main` (crew/mayor) or `polecat/*` (polecats). No feature branches.
-- Upstream sync is a mayor-level operation done manually, not by agents
-
-If `git remote -v` shows different fetch/push URLs (fetch=steveyegge, push=vaxhacker), that is intentional. Just `git push origin main`.
+- `git push origin main` — this pushes to the fork (`vaxhacker/beads`)
+- `git remote -v` shows split fetch/push URLs (fetch=steveyegge, push=vaxhacker). This is intentional.
+- Polecats push to `polecat/*` branches, crew/mayor push to `main`.
 
 ## Key Sections
 
