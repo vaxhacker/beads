@@ -24,6 +24,16 @@ import (
 	"github.com/steveyegge/beads/internal/storage/dolt"
 )
 
+// testDoltServerPort is the port of the shared test Dolt server (0 = not running).
+var testDoltServerPort int
+
+// uniqueTestDBName generates a unique database name for test isolation.
+func uniqueTestDBName(t *testing.T) string {
+	t.Helper()
+	h := sha256.Sum256([]byte(t.Name() + fmt.Sprintf("%d", time.Now().UnixNano())))
+	return "testdb_" + hex.EncodeToString(h[:6])
+}
+
 // testIDCounter ensures unique IDs across all test runs
 var testIDCounter atomic.Uint64
 
@@ -159,6 +169,10 @@ func newTestStore(t *testing.T, dbPath string) *dolt.DoltStore {
 
 	ensureTestMode(t)
 
+	if testDoltServerPort == 0 {
+		t.Skip("Dolt test server not available, skipping")
+	}
+
 	cfg := &dolt.Config{Path: dbPath}
 	// Use the shared test Dolt server with a unique database for isolation
 	if testDoltServerPort != 0 {
@@ -206,6 +220,10 @@ func newTestStoreWithPrefix(t *testing.T, dbPath string, prefix string) *dolt.Do
 	t.Helper()
 
 	ensureTestMode(t)
+
+	if testDoltServerPort == 0 {
+		t.Skip("Dolt test server not available, skipping")
+	}
 
 	cfg := &dolt.Config{Path: dbPath}
 	// Use the shared test Dolt server with a unique database for isolation

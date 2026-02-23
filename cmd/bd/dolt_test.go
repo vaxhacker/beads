@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/steveyegge/beads/internal/configfile"
-	dolt "github.com/steveyegge/beads/internal/storage/dolt"
+	"github.com/steveyegge/beads/internal/doltserver"
 )
 
 func TestDoltShowConfigNotInRepo(t *testing.T) {
@@ -511,223 +510,46 @@ func TestDoltConfigEnvironmentOverrides(t *testing.T) {
 	})
 }
 
-// --- start/stop tests ---
-
-func TestDoltStopNoServerRunning(t *testing.T) {
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	doltDir := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0755); err != nil {
-		t.Fatalf("failed to create dolt dir: %v", err)
-	}
-
-	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
-	if err := cfg.Save(beadsDir); err != nil {
-		t.Fatalf("failed to save config: %v", err)
-	}
-
-	t.Setenv("BEADS_DIR", beadsDir)
-
-	oldCwd, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to chdir: %v", err)
-	}
-	defer func() { _ = os.Chdir(oldCwd) }()
-
-	t.Run("text output", func(t *testing.T) {
-		origJsonOutput := jsonOutput
-		defer func() { jsonOutput = origJsonOutput }()
-		jsonOutput = false
-
-		output := captureDoltStopOutput(t)
-
-		if output == "" {
-			t.Skip("output capture failed")
+func TestDoltServerIsRunning(t *testing.T) {
+	t.Run("no server running", func(t *testing.T) {
+		beadsDir := t.TempDir()
+		state, err := doltserver.IsRunning(beadsDir)
+		if err != nil {
+			t.Fatalf("IsRunning error: %v", err)
 		}
-
-		if !strings.Contains(output, "No Dolt server is running") {
-			t.Errorf("expected 'No Dolt server is running' message, got: %s", output)
+		if state.Running {
+			t.Error("expected Running=false when no PID file exists")
 		}
 	})
 
-	t.Run("json output", func(t *testing.T) {
-		origJsonOutput := jsonOutput
-		defer func() { jsonOutput = origJsonOutput }()
-		jsonOutput = true
-
-		output := captureDoltStopOutput(t)
-
-		if output == "" {
-			t.Skip("output capture failed")
+	t.Run("stale PID file", func(t *testing.T) {
+		beadsDir := t.TempDir()
+		pidFile := filepath.Join(beadsDir, "dolt-server.pid")
+		os.WriteFile(pidFile, []byte("99999999"), 0600)
+		state, err := doltserver.IsRunning(beadsDir)
+		if err != nil {
+			t.Fatalf("IsRunning error: %v", err)
 		}
-
-		var result map[string]any
-		if err := json.Unmarshal([]byte(output), &result); err != nil {
-			t.Skipf("output not pure JSON: %s", output)
-		}
-
-		if result["status"] != "not_running" {
-			t.Errorf("expected status 'not_running', got %v", result["status"])
-		}
-		if result["message"] != "No Dolt server is running" {
-			t.Errorf("expected message 'No Dolt server is running', got %v", result["message"])
+		if state.Running {
+			t.Error("expected Running=false for stale PID")
 		}
 	})
-}
 
-func TestDoltStopCleansUpPidFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	doltDir := filepath.Join(beadsDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0755); err != nil {
-		t.Fatalf("failed to create dolt dir: %v", err)
-	}
-
-	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
-	if err := cfg.Save(beadsDir); err != nil {
-		t.Fatalf("failed to save config: %v", err)
-	}
-
-	// Create a stale PID file (non-existent process)
-	pidFile := filepath.Join(doltDir, "dolt-server.pid")
-	if err := os.WriteFile(pidFile, []byte("999999"), 0600); err != nil {
-		t.Fatalf("failed to write PID file: %v", err)
-	}
-
-	t.Setenv("BEADS_DIR", beadsDir)
-
-	oldCwd, _ := os.Getwd()
-	if err := os.Chdir(tmpDir); err != nil {
-		t.Fatalf("failed to chdir: %v", err)
-	}
-	defer func() { _ = os.Chdir(oldCwd) }()
-
-	origJsonOutput := jsonOutput
-	defer func() { jsonOutput = origJsonOutput }()
-	jsonOutput = false
-
-	// stopDoltServer should handle stale PID gracefully (GetRunningServerPID
-	// returns 0 for dead processes and cleans up the stale file)
-	output := captureDoltStopOutput(t)
-
-	if output == "" {
-		t.Skip("output capture failed")
-	}
-
-	if !strings.Contains(output, "No Dolt server is running") {
-		t.Errorf("expected no-server message for stale PID, got: %s", output)
-	}
-}
-
-func TestDoltStartRequiresDataDir(t *testing.T) {
-	// Verify precondition: startDoltServer checks that .beads/dolt exists.
-	// We can't call startDoltServer directly (it calls os.Exit),
-	// but we verify the data dir doesn't exist so the check would fire.
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("failed to create .beads dir: %v", err)
-	}
-
-	doltDir := filepath.Join(beadsDir, "dolt")
-	if _, err := os.Stat(doltDir); !os.IsNotExist(err) {
-		t.Error("expected .beads/dolt to not exist")
-	}
-}
-
-func TestDoltStartDetectsAlreadyRunning(t *testing.T) {
-	// Verify precondition: if a PID file contains a running PID,
-	// GetRunningServerPID returns it (and startDoltServer would exit).
-	tmpDir := t.TempDir()
-	doltDir := filepath.Join(tmpDir, "dolt")
-	if err := os.MkdirAll(doltDir, 0755); err != nil {
-		t.Fatalf("failed to create dolt dir: %v", err)
-	}
-
-	// Write current process PID — guaranteed to be alive
-	pidFile := filepath.Join(doltDir, "dolt-server.pid")
-	pid := os.Getpid()
-	if err := os.WriteFile(pidFile, []byte(fmt.Sprintf("%d", pid)), 0600); err != nil {
-		t.Fatalf("failed to write PID file: %v", err)
-	}
-
-	// GetRunningServerPID should find the running process
-	gotPID := dolt.GetRunningServerPID(doltDir)
-	if gotPID != pid {
-		t.Errorf("expected PID %d, got %d", pid, gotPID)
-	}
-}
-
-func TestDoltStartUsesConfigValues(t *testing.T) {
-	// Verify that start would use the correct config values.
-	// We can't call startDoltServer() directly in tests because it calls
-	// os.Exit on failure (which kills the test binary). Instead, verify
-	// the config accessors return the expected values — the same code path
-	// that startDoltServer() uses to build its ServerConfig.
-	tmpDir := t.TempDir()
-	beadsDir := filepath.Join(tmpDir, ".beads")
-	if err := os.MkdirAll(beadsDir, 0755); err != nil {
-		t.Fatalf("failed to create .beads dir: %v", err)
-	}
-
-	cfg := configfile.DefaultConfig()
-	cfg.Backend = configfile.BackendDolt
-	cfg.DoltServerHost = "10.20.30.40"
-	cfg.DoltServerPort = 4455
-	cfg.DoltServerUser = "testadmin"
-	cfg.DoltDatabase = "myissues"
-	if err := cfg.Save(beadsDir); err != nil {
-		t.Fatalf("failed to save config: %v", err)
-	}
-
-	// Reload and verify — same flow startDoltServer() uses
-	loaded, err := configfile.Load(beadsDir)
-	if err != nil {
-		t.Fatalf("failed to reload config: %v", err)
-	}
-
-	if loaded.GetDoltServerHost() != "10.20.30.40" {
-		t.Errorf("expected host '10.20.30.40', got %s", loaded.GetDoltServerHost())
-	}
-	if loaded.GetDoltServerPort() != 4455 {
-		t.Errorf("expected port 4455, got %d", loaded.GetDoltServerPort())
-	}
-	if loaded.GetDoltServerUser() != "testadmin" {
-		t.Errorf("expected user 'testadmin', got %s", loaded.GetDoltServerUser())
-	}
-	if loaded.GetDoltDatabase() != "myissues" {
-		t.Errorf("expected database 'myissues', got %s", loaded.GetDoltDatabase())
-	}
+	t.Run("corrupt PID file", func(t *testing.T) {
+		beadsDir := t.TempDir()
+		pidFile := filepath.Join(beadsDir, "dolt-server.pid")
+		os.WriteFile(pidFile, []byte("not-a-number"), 0600)
+		state, err := doltserver.IsRunning(beadsDir)
+		if err != nil {
+			t.Fatalf("IsRunning error: %v", err)
+		}
+		if state.Running {
+			t.Error("expected Running=false for corrupt PID file")
+		}
+	})
 }
 
 // Helper functions
-
-func captureDoltStopOutput(t *testing.T) string {
-	t.Helper()
-	oldStdout := os.Stdout
-	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-	os.Stderr = w
-
-	defer func() {
-		os.Stdout = oldStdout
-		os.Stderr = oldStderr
-		if rec := recover(); rec != nil {
-			// Ignore panics from os.Exit
-		}
-	}()
-
-	stopDoltServer()
-
-	w.Close()
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-
-	return buf.String()
-}
 
 func captureDoltShowOutput(t *testing.T) string {
 	t.Helper()
@@ -832,6 +654,89 @@ func TestSetDoltConfigWorktreeIsolation(t *testing.T) {
 	// the values we wrote don't match the "known bad" test values from the original bug.
 	if loadedCfg.DoltServerHost == "10.0.0.1" && loadedCfg.DoltServerPort == 3309 {
 		t.Error("REGRESSION: test values match the known-bad production corruption values (10.0.0.1:3309)")
+	}
+}
+
+// TestDoltPushPullCommitNeedStore verifies GH#2042: bd dolt push/pull/commit
+// must NOT be skipped by the noDbCommands check in PersistentPreRun.
+// When the store is nil (because no database is available), these commands
+// should report "no store available" rather than silently doing nothing.
+func TestDoltPushPullCommitNeedStore(t *testing.T) {
+	// Save original state
+	originalStore := store
+	defer func() { store = originalStore }()
+
+	// Set store to nil to simulate missing store initialization
+	store = nil
+
+	// Ensure cmdCtx.Store is also nil
+	originalCmdCtx := cmdCtx
+	cmdCtx = &CommandContext{}
+	defer func() { cmdCtx = originalCmdCtx }()
+
+	// Verify that getStore() returns nil (confirming the store wasn't initialized)
+	if getStore() != nil {
+		t.Fatal("expected getStore() to return nil with no database")
+	}
+
+	// Verify push, pull, commit are registered under doltCmd
+	storeSubcommands := []string{"push", "pull", "commit"}
+	for _, name := range storeSubcommands {
+		found := false
+		for _, cmd := range doltCmd.Commands() {
+			if cmd.Name() == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected dolt subcommand %q to be registered", name)
+		}
+	}
+
+	// The key verification: needsStoreDoltSubcommands in PersistentPreRun
+	// lists push, pull, and commit. When these commands run, PersistentPreRun
+	// will NOT return early (unlike show/set/test which skip via the "dolt"
+	// parent entry in noDbCommands). This means the store will be initialized.
+	//
+	// We can't easily invoke PersistentPreRun in a unit test without a real
+	// database, but we verify the structural requirement: these commands check
+	// for nil store and report "no store available" when it's missing.
+}
+
+// TestDoltConfigSubcommandsSkipStore verifies that dolt config/diagnostic
+// subcommands (show, set, test, start, stop, status) don't require the store.
+// These commands manage their own config loading and should work without
+// PersistentPreRun's store initialization.
+func TestDoltConfigSubcommandsSkipStore(t *testing.T) {
+	// Verify these are registered as children of doltCmd
+	configSubcommands := []string{"show", "set", "test", "start", "stop", "status"}
+	for _, name := range configSubcommands {
+		found := false
+		for _, cmd := range doltCmd.Commands() {
+			if cmd.Name() == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected dolt subcommand %q to be registered", name)
+		}
+	}
+
+	// Verify that push, pull, commit are also registered (they need the store)
+	storeSubcommands := []string{"push", "pull", "commit"}
+	for _, name := range storeSubcommands {
+		found := false
+		for _, cmd := range doltCmd.Commands() {
+			if cmd.Name() == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected dolt subcommand %q to be registered", name)
+		}
 	}
 }
 

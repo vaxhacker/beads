@@ -71,7 +71,7 @@ jobs:
         run: go install github.com/tc-hib/go-winres@latest
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: '~> v2'
@@ -95,7 +95,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: '3.14'
 
       - name: Install uv
         run: pip install uv
@@ -127,7 +127,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Update npm for OIDC trusted publishing
