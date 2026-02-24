@@ -686,6 +686,14 @@ func newServerMode(ctx context.Context, cfg *Config) (*DoltStore, error) {
 		}
 	}
 
+	// Self-heal missing issue_prefix from metadata.json fallback (bd-ggk).
+	// After schema init, if the config table exists but issue_prefix is missing
+	// (e.g., after dolt server restart rolling back uncommitted config, or DB
+	// recreation), recover from the filesystem-level fallback in metadata.json.
+	if !cfg.ReadOnly {
+		store.repairMissingPrefix(ctx)
+	}
+
 	// All writers operate on main — transaction isolation via RunInTransaction
 	// replaces the former branch-per-polecat approach (BD_BRANCH).
 	store.branch = "main"
@@ -959,6 +967,64 @@ func initSchemaOnDB(ctx context.Context, db *sql.DB) error {
 
 func (s *DoltStore) initSchema(ctx context.Context) error {
 	return initSchemaOnDB(ctx, s.db)
+}
+
+// repairMissingPrefix checks for and repairs a missing issue_prefix in the config table.
+// This self-heals after dolt server restarts, DB recreation, or any event that causes
+// the issue_prefix row to disappear while the schema remains intact.
+//
+// Recovery sources (in order):
+// 1. metadata.json IssuePrefix field (filesystem-level fallback)
+// 2. Database name convention (beads_<prefix> → <prefix>)
+// 3. Existing issues (extract prefix from first issue ID)
+func (s *DoltStore) repairMissingPrefix(ctx context.Context) {
+	// Check if issue_prefix exists
+	var prefix string
+	err := s.db.QueryRowContext(ctx, "SELECT `value` FROM config WHERE `key` = 'issue_prefix'").Scan(&prefix)
+	if err == nil && prefix != "" {
+		return // prefix is fine
+	}
+
+	// Try metadata.json fallback
+	beadsDir := filepath.Dir(s.dbPath) // dbPath is .beads/dolt → parent is .beads/
+	if cfg, loadErr := configfile.Load(beadsDir); loadErr == nil && cfg != nil && cfg.IssuePrefix != "" {
+		prefix = cfg.IssuePrefix
+	}
+
+	// Try database name convention: beads_<prefix> → <prefix>
+	if prefix == "" {
+		var dbName string
+		if dbErr := s.db.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&dbName); dbErr == nil {
+			if after, ok := strings.CutPrefix(dbName, "beads_"); ok && after != "" {
+				prefix = after
+			}
+		}
+	}
+
+	// Try extracting from existing issues
+	if prefix == "" {
+		var issueID string
+		if idErr := s.db.QueryRowContext(ctx, "SELECT id FROM issues LIMIT 1").Scan(&issueID); idErr == nil && issueID != "" {
+			if idx := strings.LastIndex(issueID, "-"); idx > 0 {
+				prefix = issueID[:idx]
+			}
+		}
+	}
+
+	if prefix == "" {
+		return // no recovery source available
+	}
+
+	// Repair: insert the prefix
+	_, _ = s.db.ExecContext(ctx,
+		"INSERT INTO config (`key`, `value`) VALUES ('issue_prefix', ?) "+
+			"ON DUPLICATE KEY UPDATE `value` = ?",
+		prefix, prefix)
+
+	// Best-effort commit so it survives server restarts
+	_, _ = s.db.ExecContext(ctx, "CALL DOLT_COMMIT('-Am', 'auto-repair: restore missing issue_prefix')")
+
+	fmt.Fprintf(os.Stderr, "Warning: issue_prefix was missing from config table, restored to %q (bd-ggk)\n", prefix)
 }
 
 // splitStatements splits a SQL script into individual statements

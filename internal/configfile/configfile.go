@@ -15,6 +15,12 @@ type Config struct {
 	Database string `json:"database"`
 	Backend  string `json:"backend,omitempty"` // "dolt" (default) or "sqlite"
 
+	// IssuePrefix is the beads issue prefix (e.g., "gt", "bd", "cm").
+	// Stored here as a filesystem-level fallback for the config table value.
+	// If the dolt config table loses issue_prefix (server restart, DB recreation),
+	// this value is used to self-heal. Set during bd init and bd rename-prefix.
+	IssuePrefix string `json:"issue_prefix,omitempty"`
+
 	// Deletions configuration
 	DeletionsRetentionDays int `json:"deletions_retention_days,omitempty"` // 0 means use default (3 days)
 
