@@ -449,6 +449,13 @@ environment variable.`,
 					cfg.DoltDatabase = strings.ReplaceAll(prefix, "-", "_")
 				}
 
+				// Store issue_prefix in metadata.json as filesystem-level fallback (bd-ggk).
+				// If the dolt config table loses issue_prefix (server restart, DB recreation),
+				// the store open path can self-heal from this value.
+				if prefix != "" {
+					cfg.IssuePrefix = prefix
+				}
+
 				// Always server mode
 				cfg.DoltMode = configfile.DoltModeServer
 				if serverHost != "" {

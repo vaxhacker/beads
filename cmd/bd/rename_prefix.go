@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/beads/internal/beads"
+	"github.com/steveyegge/beads/internal/configfile"
 	"github.com/steveyegge/beads/internal/git"
 	"github.com/steveyegge/beads/internal/storage/dolt"
 	"github.com/steveyegge/beads/internal/types"
@@ -162,6 +164,9 @@ NOTE: This is a rare operation. Most users never need this command.`,
 		}
 
 		fmt.Printf("%s Successfully renamed prefix from %s to %s\n", ui.RenderPass("✓"), ui.RenderAccent(oldPrefix), ui.RenderAccent(newPrefix))
+
+		// Update metadata.json fallback (bd-ggk)
+		updateMetadataPrefix(newPrefix)
 
 		if jsonOutput {
 			result := map[string]interface{}{
@@ -356,6 +361,9 @@ func repairPrefixes(ctx context.Context, st *dolt.DoltStore, actorName string, t
 		ui.RenderPass("✓"), len(prefixes), ui.RenderAccent(targetPrefix))
 	fmt.Printf("  %d issues repaired, %d issues unchanged\n", len(incorrectIssues), len(correctIssues))
 
+	// Update metadata.json fallback (bd-ggk)
+	updateMetadataPrefix(targetPrefix)
+
 	if jsonOutput {
 		result := map[string]interface{}{
 			"target_prefix":    targetPrefix,
@@ -459,6 +467,22 @@ func generateRepairHashID(prefix string, issue *types.Issue, actor string, usedI
 	}
 
 	return newID, nil
+}
+
+// updateMetadataPrefix updates issue_prefix in metadata.json as a filesystem fallback (bd-ggk).
+func updateMetadataPrefix(newPrefix string) {
+	beadsDir := beads.FindBeadsDir()
+	if beadsDir == "" {
+		return
+	}
+	cfg, err := configfile.Load(beadsDir)
+	if err != nil || cfg == nil {
+		return
+	}
+	cfg.IssuePrefix = newPrefix
+	if err := cfg.Save(beadsDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update issue_prefix in metadata.json: %v\n", err)
+	}
 }
 
 func init() {
