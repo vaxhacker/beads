@@ -191,6 +191,12 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verboseFlag, "verbose", "v", false, "Enable verbose/debug output")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress non-essential output (errors only)")
 
+	// No-op compatibility flag: gastown passes --allow-stale to bd commands.
+	// Accepted and ignored so gt sling and other gastown integrations work.
+	var allowStale bool
+	rootCmd.PersistentFlags().BoolVar(&allowStale, "allow-stale", false, "Compatibility flag (no-op, accepted for gastown integration)")
+	_ = rootCmd.PersistentFlags().MarkHidden("allow-stale")
+
 	// Add --version flag to root command (same behavior as version subcommand)
 	rootCmd.Flags().BoolP("version", "V", false, "Print version information")
 
